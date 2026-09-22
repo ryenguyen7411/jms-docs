@@ -1,0 +1,606 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+  :root { color-scheme: light dark; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; font: 14px system-ui, -apple-system, "Segoe UI", sans-serif; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<title>JMS Backend Handover</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+  :root {
+    --ground: #F4F6F6;
+    --surface: #FFFFFF;
+    --surface-2: #EDF0F0;
+    --ink: #14191A;
+    --ink-2: #47555A;
+    --ink-3: #74838A;
+    --rule: #D6DDDD;
+    --accent: #145E58;
+    --accent-soft: #DCEAE7;
+    --money: #A8481A;
+    --money-soft: #F6E6DC;
+    --display: 'Archivo', 'Helvetica Neue', Arial, sans-serif;
+    --body: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+    --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0E1213;
+      --surface: #161C1D;
+      --surface-2: #1E2627;
+      --ink: #E4EAE9;
+      --ink-2: #A6B4B5;
+      --ink-3: #7B8A8B;
+      --rule: #2A3435;
+      --accent: #58C0B2;
+      --accent-soft: #14312E;
+      --money: #E08B5C;
+      --money-soft: #33211A;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0E1213;
+    --surface: #161C1D;
+    --surface-2: #1E2627;
+    --ink: #E4EAE9;
+    --ink-2: #A6B4B5;
+    --ink-3: #7B8A8B;
+    --rule: #2A3435;
+    --accent: #58C0B2;
+    --accent-soft: #14312E;
+    --money: #E08B5C;
+    --money-soft: #33211A;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 16px;
+    line-height: 1.6;
+    margin: 0;
+  }
+  a { color: var(--accent); text-underline-offset: 3px; }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0;
+    max-width: 1180px;
+    margin: 0 auto;
+    padding-inline: 16px;
+  }
+  @media (min-width: 940px) {
+    .shell { grid-template-columns: 216px minmax(0, 1fr); gap: 40px; padding-inline: 32px; }
+  }
+
+  /* ---------- nav ---------- */
+  nav.rail {
+    position: sticky;
+    top: env(safe-area-inset-top, 0px);
+    z-index: 5;
+    background: var(--ground);
+    border-bottom: 1px solid var(--rule);
+    padding-block: 10px;
+    margin-inline: -16px;
+    padding-inline: 16px;
+    overflow-x: auto;
+  }
+  nav.rail ol {
+    list-style: none;
+    display: flex;
+    gap: 14px;
+    margin: 0;
+    padding: 0;
+    white-space: nowrap;
+  }
+  nav.rail a {
+    font-family: var(--display);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: .07em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    text-decoration: none;
+  }
+  nav.rail a:hover { color: var(--accent); }
+  @media (min-width: 940px) {
+    nav.rail {
+      align-self: start;
+      top: calc(env(safe-area-inset-top, 0px) + 32px);
+      border-bottom: 0;
+      border-right: 1px solid var(--rule);
+      margin-inline: 0;
+      padding-inline: 0 20px;
+      padding-block: 0;
+      overflow: visible;
+    }
+    nav.rail ol { flex-direction: column; gap: 9px; white-space: normal; }
+  }
+  .rail-title {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .12em;
+    color: var(--ink-3);
+    text-transform: uppercase;
+    margin-bottom: 12px;
+    display: none;
+  }
+  @media (min-width: 940px) { .rail-title { display: block; } }
+
+  main { padding-block: 40px 96px; min-width: 0; }
+
+  /* ---------- masthead ---------- */
+  .masthead { border-bottom: 2px solid var(--ink); padding-bottom: 26px; margin-bottom: 34px; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 12px;
+  }
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(30px, 6vw, 46px);
+    line-height: 1.05;
+    letter-spacing: -.02em;
+    margin: 0 0 14px;
+    text-wrap: balance;
+  }
+  .standfirst { font-size: 18px; color: var(--ink-2); max-width: 62ch; margin: 0; }
+  .meta {
+    display: flex; flex-wrap: wrap; gap: 8px 22px;
+    margin-top: 20px;
+    font-family: var(--mono); font-size: 11.5px; color: var(--ink-3);
+  }
+  .meta b { color: var(--ink-2); font-weight: 600; }
+
+  h2 {
+    font-family: var(--display);
+    font-size: clamp(21px, 3.4vw, 26px);
+    font-weight: 600;
+    letter-spacing: -.01em;
+    margin: 52px 0 6px;
+    text-wrap: balance;
+  }
+  h2 .num {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--accent);
+    display: block;
+    letter-spacing: .12em;
+    margin-bottom: 6px;
+    font-weight: 400;
+  }
+  h3 {
+    font-family: var(--display);
+    font-size: 16px;
+    font-weight: 600;
+    margin: 30px 0 4px;
+    letter-spacing: .01em;
+  }
+  p { max-width: 68ch; }
+  ul, ol { max-width: 68ch; padding-left: 20px; }
+  li { margin-block: 4px; }
+  code {
+    font-family: var(--mono);
+    font-size: .855em;
+    background: var(--surface-2);
+    border-radius: 3px;
+    padding: 1px 5px;
+    word-break: break-word;
+  }
+  strong { font-weight: 600; }
+
+  .lede { font-size: 17px; color: var(--ink-2); max-width: 66ch; }
+
+  /* ---------- tables ---------- */
+  .scroll { overflow-x: auto; margin-block: 18px; border: 1px solid var(--rule); border-radius: 2px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 520px; }
+  th, td { text-align: left; padding: 9px 13px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th {
+    font-family: var(--display); font-size: 11px; font-weight: 600;
+    letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3);
+    background: var(--surface-2); white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  td code { background: transparent; padding: 0; color: var(--ink-2); }
+  .num-col { font-variant-numeric: tabular-nums; }
+
+  /* ---------- callouts ---------- */
+  .note {
+    border-left: 3px solid var(--accent);
+    background: var(--accent-soft);
+    padding: 14px 16px;
+    margin-block: 20px;
+    font-size: 15px;
+  }
+  .note p { margin: 0; max-width: none; }
+  .note p + p { margin-top: 8px; }
+  .note.money { border-left-color: var(--money); background: var(--money-soft); }
+  .note .tag {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--money); display: block; margin-bottom: 5px;
+  }
+  .note:not(.money) .tag { color: var(--accent); }
+
+  /* ---------- answer blocks ---------- */
+  .qa { border-top: 1px solid var(--rule); padding-top: 18px; margin-top: 26px; }
+  .qa:first-of-type { border-top: 0; }
+  .q {
+    font-family: var(--display); font-weight: 600; font-size: 17px;
+    margin: 0 0 10px; color: var(--ink);
+  }
+  .q span {
+    font-family: var(--mono); font-size: 11px; color: var(--accent);
+    letter-spacing: .1em; margin-right: 8px;
+  }
+
+  /* ---------- key-value strip ---------- */
+  .facts { display: grid; gap: 1px; background: var(--rule); border: 1px solid var(--rule); margin-block: 20px; }
+  @media (min-width: 620px) { .facts { grid-template-columns: repeat(3, 1fr); } }
+  .fact { background: var(--surface); padding: 13px 15px; }
+  .fact dt {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--ink-3); margin-bottom: 4px;
+  }
+  .fact dd { margin: 0; font-family: var(--display); font-size: 15px; font-weight: 600; }
+  .fact dd small { display:block; font-family: var(--body); font-weight: 400; font-size: 13px; color: var(--ink-2); margin-top: 2px; }
+
+  pre.mermaid {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    padding: 18px 10px;
+    overflow-x: auto;
+    margin-block: 22px;
+    text-align: center;
+  }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-block: 14px; padding: 0; list-style: none; }
+  .chips li {
+    font-family: var(--mono); font-size: 11.5px;
+    border: 1px solid var(--rule); background: var(--surface);
+    padding: 3px 8px; border-radius: 2px; color: var(--ink-2); margin: 0;
+  }
+
+  footer {
+    margin-top: 64px; padding-top: 22px; border-top: 1px solid var(--rule);
+    font-size: 13.5px; color: var(--ink-3); max-width: 68ch;
+  }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+<div class="shell">
+  <nav class="rail" aria-label="Sections">
+    <p class="rail-title">Contents</p>
+    <ol>
+      <li><a href="#map">System map</a></li>
+      <li><a href="#answers">Five answers</a></li>
+      <li><a href="#confirm">Money path</a></li>
+      <li><a href="#surface">API surface</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <header class="masthead">
+      <p class="eyebrow">Handover · BO / Devsite → JMS backend</p>
+      <h1>What the SMS Service does today</h1>
+      <p class="standfirst">A description of every flow the current service runs, written so the new JMS backend can replace it without breaking the Back Office, the Devsite, or the Android phones already in the field.</p>
+      <div class="meta">
+        <span><b>Source</b> production code, branch main</span>
+        <span><b>Scope</b> ingest · notifications · device · auth · confirm · ops</span>
+        <span><b>Full detail</b> docs/jms-handover, 7 files</span>
+      </div>
+    </header>
+
+    <p class="lede">Merchants run Android phones with bank SIMs. The app reads incoming bank SMS and bank-app notifications, uploads them, and sends a heartbeat. The server parses each SMS into a statement — amount, reference code, balance, time. The BO matches statements against claimed deposits and credits the player.</p>
+
+    <p>Three things carry money: <strong>SMS ingest</strong>, <strong>ping</strong>, and the <strong>confirm loop</strong>. Everything else is operational tooling. This page summarises all of it; the markdown set carries field-level contracts, error codes and file references.</p>
+
+    <section id="map">
+      <h2><span class="num">01</span>Where things live</h2>
+
+      <p>Two databases, no shared tables. Raw SMS, parsed statements, devices, users and regex templates exist <em>only</em> inside the SMS Service. The BO keeps deposits, accounts and the link tables. Retiring the service makes the new backend the system of record for that data.</p>
+
+      <pre class="mermaid">
+flowchart LR
+  APP["JMS Android app"]
+  subgraph SVC["SMS Service - to be replaced"]
+    ING["ingest + parser"]
+    DEV["device, ping, version gate"]
+    USR["users + feature flags"]
+    PSH["FCM push, B2B forward"]
+  end
+  subgraph BOX["BO - stays"]
+    MATCH["deposit matching"]
+    NOTI["bank-notification ingest"]
+    PAGES["BO and Devsite pages"]
+  end
+  APP -->|"SMS, ping, login"| SVC
+  APP -->|"bank notifications"| NOTI
+  ING -->|"unparsed SMS"| BOX
+  DEV -->|"heartbeat, account verify, version poll"| BOX
+  MATCH -->|"pull statements by refcode"| ING
+  MATCH -->|"mark confirmed"| ING
+  PAGES -->|"reads, via BO proxy"| SVC
+      </pre>
+
+      <div class="facts">
+        <div class="fact"><dt>Ping cadence</dt><dd>~60 s<small>per device; batched 200 or 45 s</small></dd></div>
+        <div class="fact"><dt>Confirm loop</dt><dd>15 s<small>BO scheduler</small></dd></div>
+        <div class="fact"><dt>Version poll</dt><dd>60 s<small>service reads BO, keeps last good</small></dd></div>
+        <div class="fact"><dt>Disconnect threshold</dt><dd>10 min<small>no ping = not connected</small></dd></div>
+        <div class="fact"><dt>Environments</dt><dd>2<small>internal and reseller, separate DBs</small></dd></div>
+        <div class="fact"><dt>SMS per request</dt><dd>1<small>no batching today</small></dd></div>
+      </div>
+
+      <h3>Ownership after the split</h3>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Area</th><th>Owner</th></tr></thead>
+          <tbody>
+            <tr><td>SMS ingest, parsing, regex templates, raw and parsed storage</td><td>JMS backend</td></tr>
+            <tr><td>Stored SMS-confirmation records</td><td>JMS backend</td></tr>
+            <tr><td>Device activation, secrets, ping, version gate, APK</td><td>JMS backend</td></tr>
+            <tr><td>App credentials and feature flags</td><td>JMS backend</td></tr>
+            <tr><td>Push to devices, B2B forwarding, chat</td><td>JMS backend</td></tr>
+            <tr><td>Creating Devsite login users and leader-balance users</td><td>BO, calling the backend's admin API</td></tr>
+            <tr><td>Deposit matching and crediting the player</td><td>BO</td></tr>
+            <tr><td>Bank-notification ingest</td><td>BO, unchanged for now</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note">
+        <span class="tag">Release state</span>
+        <p>In-app chat, JWT issuance at login, refresh tokens and the internal FCM endpoint live on an unmerged branch. <strong>Production login returns feature flags and no token.</strong> Treat chat and JWT as planned, not current, behaviour.</p>
+      </div>
+    </section>
+
+    <section id="answers">
+      <h2><span class="num">02</span>The five questions, answered</h2>
+
+      <div class="qa">
+        <p class="q"><span>Q1</span>What happens to an SMS sent to the server?</p>
+        <p>Nine steps, and the response is returned <em>before</em> parsing runs — the app never learns whether its SMS produced a statement.</p>
+        <pre class="mermaid">
+flowchart TD
+  A["POST /api/Sms/add"] --> B{"payload valid?"}
+  B -- no --> E1["400 · 1006"]
+  B -- yes --> C{"phone valid?"}
+  C -- no --> E2["400 · 1007"]
+  C -- yes --> D{"sender allowed?"}
+  D -- no --> S1["200 · 0000 and dropped"]
+  D -- yes --> F{"device logged in?"}
+  F -- no --> E3["400 · 1001"]
+  F -- yes --> G{"signature valid?"}
+  G -- no --> E4["400 · 1002"]
+  G -- yes --> H["store raw SMS, unique index"]
+  H --> I["200 · 0000"]
+  H --> J["async parse"]
+  J --> K{"parsed?"}
+  K -- yes --> L["store statement, balance check, alert"]
+  K -- no --> M["forward to BO OTP hook, alert"]
+        </pre>
+        <p><strong>Filter</strong> — sender allow-list of 13 fixed senders plus a sender-mask table, cached 30 s, enabled in both productions. <strong>Verify</strong> — <code>SHA256(phone + deviceId + deviceSecret)</code>, with phone and device id taken <em>raw from the request JSON</em>: static per device, no timestamp or nonce. <strong>Store</strong> — raw row deduplicated on <code>(sender, SHA256 body, phone, receivedTime)</code>; statement deduplicated on <code>(bank, refCode, phone, transferredTime)</code>. <strong>Parse</strong> — four hard-coded parsers in order bKash, Nagad, Rocket, Upay (15 message shapes between them), then database regex templates by sender mask, ordered by priority.</p>
+        <ul class="chips">
+          <li>0000 success · dropped · duplicate</li>
+          <li>1001 device</li>
+          <li>1002 signature</li>
+          <li>1004 internal</li>
+          <li>1006 payload</li>
+          <li>1007 phone</li>
+        </ul>
+        <div class="note money">
+          <span class="tag">Carries money</span>
+          <p>A rejected sender and a duplicate both return success, so the app cannot tell "stored" from "ignored". Changing that changes the Android app too.</p>
+          <p>The parse queue is in memory: a restart loses queued work, leaving a raw SMS that never becomes a statement. The new backend needs a durable queue or an outbox.</p>
+        </div>
+      </div>
+
+      <div class="qa">
+        <p class="q"><span>Q2</span>The same question, for notifications</p>
+        <p>"Noti" is two unrelated things. Only one of them touches the SMS Service.</p>
+        <div class="scroll">
+          <table>
+            <thead><tr><th></th><th>Outbound push</th><th>Bank-notification ingest</th></tr></thead>
+            <tbody>
+              <tr><th>Direction</th><td>BO → device</td><td>device → server</td></tr>
+              <tr><th>Handled by</th><td>SMS Service</td><td><strong>BO directly</strong>, the service is not involved</td></tr>
+              <tr><th>Purpose</th><td>operational messages to operators</td><td>payment evidence from bank apps</td></tr>
+              <tr><th>Carries money</th><td>no</td><td><strong>yes</strong>, it confirms deposits</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p><strong>Outbound push</strong>: send, edit, resend, plus reads for statistics and recipients. Recipients resolve from master merchant code plus a phone list; a phone with no device is still recorded, so operators see who was unreachable. Delivery is by FCM token, 500 per batch, five batches in flight. A fire-and-forget callback reports counters back to the BO — with no retry today.</p>
+        <p><strong>Bank-notification ingest</strong> runs on the BO and is the better-built of the two pipelines. Worth copying, because the BO team will ask for the same visibility over SMS:</p>
+        <ul>
+          <li>the signature covers <strong>title and body</strong>, and is verified on the raw request <em>before</em> normalisation;</li>
+          <li>deduplication uses a canonical event id: SHA-256 over length-prefixed fields after NFKC normalisation and whitespace collapsing;</li>
+          <li>the request is parked in an inbox and acknowledged immediately; a scheduler drains it, claiming batches atomically and reclaiming rows stuck over five minutes;</li>
+          <li>retry is exponential with a cap, ten attempts, and exhausted rows are kept with their last error rather than deleted;</li>
+          <li>matching requires an exact amount inside a time window, and <strong>two candidates means nothing is confirmed</strong> — an operator decides.</li>
+        </ul>
+      </div>
+
+      <div class="qa">
+        <p class="q"><span>Q3</span>Does ping do anything besides recording device status?</p>
+        <p>Yes — five things, and one of them is the most load-bearing call in the system.</p>
+        <div class="scroll">
+          <table>
+            <thead><tr><th class="num-col">#</th><th>Side effect</th><th>Why it matters</th></tr></thead>
+            <tbody>
+              <tr><td class="num-col">1</td><td>Version gate</td><td>rejects outdated apps with code <code>1008</code> before anything else. The gate lives on the <strong>ping path</strong>, not on the version endpoint</td></tr>
+              <tr><td class="num-col">2</td><td>Device row update</td><td>last ping, UI version, and the <strong>FCM token</strong> — push keeps working because token refresh rides the heartbeat</td></tr>
+              <tr><td class="num-col">3</td><td>Heartbeat forwarded to the BO</td><td><strong>an account with no recent ping is excluded from deposit routing.</strong> A ping outage stops the business, and has done so before</td></tr>
+              <tr><td class="num-col">4</td><td>Client IP capture</td><td>classified direct / CDN / proxy, alerted for two tenants — operators spot phones that moved</td></tr>
+              <tr><td class="num-col">5</td><td>Leader token cleanup</td><td>signing a device out clears leader push tokens on the same device</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Ping carries <strong>no configuration and no commands</strong> back to the app: no force logout, no force update, no reset. The app learns those by calling the version endpoint. The gate itself is narrow and must be reproduced exactly: only UI version 2 is gated, and an app reporting version <code>0</code> is never blocked.</p>
+      </div>
+
+      <div class="qa">
+        <p class="q"><span>Q4</span>What to watch out for when activating a SIM</p>
+        <p>Activation returns the device secret <strong>encrypted with a public key the app supplies</strong>; the plaintext never crosses the wire.</p>
+        <pre class="mermaid">
+flowchart LR
+  NEW["no row for this SIM"] -->|activate| ACT["active · secret issued"]
+  ACT -->|"activate, same device"| SAME["same secret returned<br/>login state untouched"]
+  ACT -->|"activate, other device"| ERR["rejected · 2002"]
+  ACT -->|"sign out or reset"| OUT["device id and secret cleared"]
+  OUT -->|activate| NEWSEC["new secret issued"]
+        </pre>
+        <ul>
+          <li><strong>One SIM binds to one device.</strong> Moving a SIM needs a reset first, otherwise activation fails with <code>2002</code>.</li>
+          <li><strong>Re-activating the same device returns the existing secret</strong> and does not touch login state — the app relies on this to survive a reinstall.</li>
+          <li>Activation verifies the account against the BO when enabled. Every failure mode — rejection, timeout, malformed response — currently collapses into one code, so an operator cannot tell "not registered" from "BO is down". Separate them.</li>
+        </ul>
+        <div class="note money">
+          <span class="tag">Port hazard</span>
+          <p>The secret itself is <em>opaque</em> — it embeds a fresh GUID, is never re-derived, and is only read back from the device row, so migrating it is a column copy.</p>
+          <p>The hazard is the signed string: it is <strong>phone plus device id exactly as they appear in the request JSON</strong>, untrimmed and un-normalised, while the device row is found by the normalised phone. A backend that normalises before signing breaks the entire fleet at once — verify against real rows before cutover.</p>
+        </div>
+      </div>
+
+      <div class="qa">
+        <p class="q"><span>Q5</span>What does operations have, beyond the app's endpoints?</p>
+        <p>Eighteen features. Eight of them are BO and Devsite pages whose browsers call the service directly today; after the migration the BO proxies them server-side, so <strong>the new backend serves service-to-service traffic only</strong> and needs no CORS for BO pages.</p>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Feature</th><th>What operators do with it</th><th>Wanted as</th></tr></thead>
+            <tbody>
+              <tr><td>Account SMS · All Account SMS</td><td>look up statements per account or merchant, filter, export to Excel</td><td>API + export</td></tr>
+              <tr><td>Public SMS Manage / Message</td><td>inspect statements and raw bodies, test a parse</td><td>API</td></tr>
+              <tr><td>Device · Device Manage</td><td>device lists with connectivity; force reset every device on a phone</td><td>API, authenticated</td></tr>
+              <tr><td>SMS User</td><td>create users, enable, disable, change password and feature flags — single, bulk, or whole tenant</td><td>API</td></tr>
+              <tr><td>SMS Template · SMS Parser</td><td>maintain regex templates and sender masks, test patterns</td><td>API or your console</td></tr>
+              <tr><td>SMS Monitor</td><td>ingest counts and daily series per merchant — first warning that a tenant stopped collecting</td><td>metrics API</td></tr>
+              <tr><td>Scam review</td><td>intended to list statements flagged by the balance check and approve them back into use — currently returns nothing, because the check does not persist its result</td><td>API, once the outcome is stored</td></tr>
+              <tr><td>Telegram bot</td><td>read an OTP for a phone; reset a device during an incident</td><td>API, signed</td></tr>
+              <tr><td>Export jobs</td><td>scheduled Excel exports of confirmed SMS per merchant</td><td>API or scheduled export</td></tr>
+              <tr><td>Notice management</td><td>compose, edit, resend push notifications, read delivery statistics</td><td>API</td></tr>
+              <tr><td>JMS Manage</td><td>publish app version, minimum version, force update, upload APK</td><td>stays on the BO; you poll it</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="confirm">
+      <h2><span class="num">03</span>The money path</h2>
+      <p>Matching stays on the BO. The new backend <strong>stores</strong> statements and confirmation records, and the BO pulls candidates by reference code.</p>
+
+      <pre class="mermaid">
+sequenceDiagram
+  participant U as End user
+  participant BO as BO
+  participant JMS as JMS backend
+  U->>BO: claim deposit, gets a reference code
+  loop scheduler tick
+    BO->>JMS: POST /statements/by-refcodes
+    JMS-->>BO: matching statements
+    BO->>BO: apply matching rules
+    alt exactly one match
+      BO->>BO: credit deposit, link statement
+      BO->>JMS: POST /statements/mark-confirmed
+      JMS-->>BO: ok, or conflict if already used
+    else no match
+      BO->>BO: retry next tick until the claim times out
+    end
+  end
+      </pre>
+
+      <h3>Two endpoints, not one</h3>
+      <p><code>by-refcodes</code> lets the BO read. <code>mark-confirmed</code> lets the BO say which statement was consumed by which deposit. The second exists so a statement can never be spent twice: the BO has its own link table, but a guard held by the owner of the data is what makes double-crediting impossible under retry, and what lets support answer "was this SMS already used, and for what?".</p>
+      <p>Required semantics: idempotent for the same pair; a <strong>distinguishable conflict</strong> when the same statement arrives with a different deposit — never a silent overwrite.</p>
+
+      <h3>The matching rules, so both sides agree</h3>
+      <ol>
+        <li>reference code on the deposit equals the reference code on the statement;</li>
+        <li>amounts are <strong>exactly</strong> equal;</li>
+        <li>statement transfer time minus six hours is earlier than the claim time;</li>
+        <li>the statement's bank is the paired bank of the account, and the phone matches — <strong>this one applies on the target path only, not on the live one</strong>;</li>
+        <li>a matched statement leaves the candidate set — one deposit consumes one statement.</li>
+      </ol>
+      <p>Rule 4 is a new restriction that takes effect when the pull-by-reference-code path goes live: a statement the current path accepts can be rejected by the new one. Both paths get reconciled against the same data before the switch.</p>
+
+      <div class="note money">
+        <span class="tag">Read twice</span>
+        <p>Transfer time is parsed out of the SMS body and is <strong>bank local time, UTC+6</strong> — not UTC. Rule 3 exists because of it. Changing the meaning of that field without renaming it makes deposits stop matching <em>silently</em>, which is the worst failure available here. Return an unambiguous UTC value alongside the original local one and let the BO migrate.</p>
+      </div>
+
+      <h3>Identity and replay</h3>
+      <p>The BO deduplicates on the statement id and keeps it as a foreign key. One source SMS must keep one id for its lifetime, including after a re-parse — or the response must carry the previous id as well, or old statements arrive at the BO looking new.</p>
+    </section>
+
+    <section id="surface">
+      <h2><span class="num">04</span>The integration surface</h2>
+      <p>Four different signature schemes coexist today, and a large share of the traffic carries none at all, relying on network placement. The new backend should expose <strong>one</strong> scheme for service-to-service traffic: HMAC over method, path, body digest, timestamp and nonce, bounded window, per-environment keys, separate keys for read and write.</p>
+
+      <h3>What the new backend must expose</h3>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Group</th><th>Endpoints</th></tr></thead>
+          <tbody>
+            <tr><td>Device and app</td><td>activate, ping, sign out, reset, version, APK download</td></tr>
+            <tr><td>Ingest</td><td>SMS ingest, and push-notification ingest if the app consolidates channels</td></tr>
+            <tr><td>Auth</td><td>login, user config read</td></tr>
+            <tr><td>Deposit confirm</td><td>statements by reference codes, mark confirmed, confirmation lookup</td></tr>
+            <tr><td>Read for BO pages</td><td>statement search, raw message search, device search, parse test, export</td></tr>
+            <tr><td>Administration</td><td>user create, status, password, config — single, bulk, by tenant; active master codes; device reset; statement approval</td></tr>
+            <tr><td>Metrics</td><td>ingest counts, daily series per merchant, unparsed rate</td></tr>
+            <tr><td>Notifications</td><td>send, edit, resend, read, statistics, recipients, plus the delivery callback</td></tr>
+            <tr><td>B2B</td><td>four forwarders plus one inbound callback</td></tr>
+            <tr><td>Support</td><td>latest message lookup for a phone, device reset from chat</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>BO endpoints the new backend will call</h3>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Endpoint</th><th>When</th><th>Payload</th></tr></thead>
+          <tbody>
+            <tr><td><code>/api/account/ping</code></td><td>every batch flush</td><td>phone, merchant code, last ping time, UI version</td></tr>
+            <tr><td><code>/api/account/verify-bo-account</code></td><td>device activation</td><td>phone, merchant code</td></tr>
+            <tr><td><code>/api/SMS/HookBDTPhoneSMS</code></td><td>an SMS could not be parsed</td><td>phone, messages, signature — timestamp in <em>seconds</em></td></tr>
+            <tr><td><code>/api/leader-account/ping-event</code></td><td>leader heartbeat, sign-out cleanup</td><td>username, master code, device, IP, last ping</td></tr>
+            <tr><td><code>/api/schedule-notice/notice-callback</code></td><td>after a push is delivered</td><td>notification id, counters, status</td></tr>
+            <tr><td><code>/api/jms-app/version</code></td><td>every 60 s</td><td>app key, signed header → version and APK metadata</td></tr>
+            <tr><td><code>/api/jms/b2b/*</code></td><td>app creates, confirms, lists, polls a transfer</td><td>signed forward</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+    <footer>
+      Companion to <code>docs/jms-handover/</code> — seven files with field-level request and response tables, error codes, configuration keys and source references. Behaviour described here is what the Android fleet and the BO depend on today; deviations are breaking changes and need agreement from both sides before release.
+    </footer>
+  </main>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/11.15.0/mermaid.min.js"></script>
+<script>
+  (function () {
+    if (!window.mermaid) return;
+    var dark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    mermaid.initialize({ startOnLoad: true, theme: dark ? "dark" : "neutral", securityLevel: "loose" });
+  })();
+</script>
+</body>
+</html>
