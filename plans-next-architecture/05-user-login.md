@@ -1,9 +1,12 @@
 # 05 · User login
 
-**For:** the person implementing login on this service, and the person wiring it in the app.
-**This file answers:** how a username and password become a token, without this service becoming the user store.
-**Headers on every API:** `03-mobile.md`. Ping does not send this token.
-**Feature flags:** `POST /v1/auth/config`, not the login body.
+| | |
+|---|---|
+| **For** | Server implementer and app wiring |
+| **Answers** | Username/password → token without a second user store |
+| **Headers** | `03-mobile.md` |
+| **Flags** | `POST /v1/auth/config` — not in the login body |
+| **Ping** | Does **not** send `Authorization` |
 
 ```mermaid
 sequenceDiagram

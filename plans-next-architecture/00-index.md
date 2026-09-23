@@ -1,6 +1,10 @@
 # Start here
 
-**Status:** `01`–`05` are written. `06` and `07` are not written yet. Do not look there for answers.
+| | |
+|---|---|
+| **Status** | `01`–`07` written · `08`–`09` placeholders |
+| **Read this when** | You need the map before opening a topic file |
+| **Time** | ~5 minutes on this page only |
 
 Read this page first. If you only have five minutes, stop at the end of it. Open another file only when you are about to build that piece.
 
@@ -17,9 +21,9 @@ The flag has two names and one meaning.
 | The phone | `shouldCallOldPing` | After the new ping succeeds, the phone calls the old ping API |
 | This service | `shouldFwdFromServer` | After it stores the new ping, the service calls the old ping API |
 
-Turn the flag on in one place, not both. Both on tells the Back Office twice.
+> **Dual-run rule:** Turn the flag on in **one place only** — phone **or** server, not both. Both on notifies the Back Office **twice**.
 
-App version is a different API. Ping does not check it. That API is not written yet.
+App version is a different API. Ping does not check it. Placeholders: `08-version-release.md`, `09-app-remote-config.md`.
 
 ```mermaid
 flowchart LR
@@ -29,7 +33,7 @@ flowchart LR
     OLD --> BO["Back Office"]
 ```
 
-Login is written in `05-user-login.md`. SIM binding and SMS / notification ingest come after that. They are not written yet.
+Login is in `05-user-login.md`. SIM is in `06-sim.md`. Ingest is in `07-sms-noti-ingest.md`.
 
 ## Which file to open
 
@@ -40,7 +44,17 @@ Login is written in `05-user-login.md`. SIM binding and SMS / notification inges
 | Change the Android app | `03-mobile.md` | Server retry rules |
 | Implement the ping server | `04-device-ping.md` | The mobile loop |
 | Implement login | `05-user-login.md` | Ping batching |
-| Do anything else | Nothing yet | `06` and `07` are empty on purpose |
+| Implement SIM | `06-sim.md` | Ingest |
+| Implement ingest | `07-sms-noti-ingest.md` | — |
+| Implement version / APK | `08-version-release.md` | Placeholder only |
+| Implement remote config | `09-app-remote-config.md` | Placeholder only |
+
+## File map (placeholders)
+
+| File | What it will be |
+|---|---|
+| `08-version-release.md` | App version check and APK download |
+| `09-app-remote-config.md` | Server-driven base URL and dual-run flags for the app |
 
 ## Words
 
@@ -51,7 +65,8 @@ Use these names. Do not invent a third name for the same thing.
 | New ping | `POST /v1/devices/ping`. Body is `signature` and `fcmToken`. Identity is in headers. Records the heartbeat in Redis. Does not call the Back Office. |
 | Old ping | `POST /device/ping`. The only collector call that notifies the Back Office. |
 | The flag | `shouldCallOldPing` on the phone, `shouldFwdFromServer` on the server. |
-| Version API | A future request. Not part of either ping. |
+| Version API | `08-version-release.md` (placeholder) |
+| Remote config | `09-app-remote-config.md` (placeholder) |
 
 ## How the rest of this folder is written
 

@@ -1,8 +1,10 @@
 # 02 · System
 
-**For:** someone who needs to see the processes and the data, before writing code.
-**This file answers:** what runs in the ping build, and what it stores.
-**The flag picture is:** `00-index.md`. This diagram is where a ping is stored.
+| | |
+|---|---|
+| **For** | Someone who needs processes and data before writing code |
+| **Answers** | What runs in the ping build, and what it stores |
+| **Dual-run diagram** | `00-index.md` — this diagram is **where** a ping is stored |
 
 ```mermaid
 flowchart LR
@@ -27,7 +29,7 @@ A new ping is written to Redis first, one value per device id. A worker copies d
 | User store | Not in this service. |
 | Payments | Not in this service. |
 
-A device row is created by SIM activation, which is not written yet. The new ping updates a row it finds. It does not insert one.
+A device row is created by SIM activation in `06-sim.md`. The new ping updates a row it finds. It does not insert one.
 
 ## What is stored
 

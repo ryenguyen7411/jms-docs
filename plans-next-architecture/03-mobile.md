@@ -1,8 +1,10 @@
 # 03 · Mobile
 
-**For:** the person changing the Android agent.
-**This file answers:** what the phone is responsible for, at the level of calls and headers.
-**Ping request, signature, and timing:** `04-device-ping.md`.
+| | |
+|---|---|
+| **For** | The person changing the Android agent |
+| **Answers** | What the phone does — calls and headers |
+| **Ping detail** | `04-device-ping.md` (body, signature, timing) |
 
 The operator UI stays the current app. Capture and the heartbeat loop stay in the Kotlin process, which keeps running after the UI is killed and restores itself after reboot. This plan does not replace the UI.
 
@@ -38,6 +40,7 @@ Every request the phone sends to this service carries these headers. The server 
 | The matching legacy ping | Legacy host, only when `shouldCallOldPing` is on | `04-device-ping.md` |
 | Version check | Separate from ping | Not written |
 | Login | This service | `05-user-login.md` |
-| SIM, SMS and notification upload | This service, later | Not written |
+| SIM activate, sign-out, reset | This service | `06-sim.md` |
+| SMS and bank-notification upload | This service | `07-sms-noti-ingest.md` |
 
-`shouldCallOldPing` on the phone and `shouldFwdFromServer` on the server are the same switch. Turn on one side only. What the server does with it is `04-device-ping.md`.
+> **Dual-run rule:** `shouldCallOldPing` (phone) and `shouldFwdFromServer` (server) are the same switch — turn on **one** side only. Server behaviour: `04-device-ping.md`.

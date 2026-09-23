@@ -1,8 +1,11 @@
 # 04 · Device ping
 
-**For:** the person implementing the Go ping handlers.
-**This file answers:** what the server does after a ping arrives.
-**Headers on every API:** `03-mobile.md`.
+| | |
+|---|---|
+| **For** | The person implementing the Go ping handlers |
+| **Answers** | What the server does after a ping arrives |
+| **Headers** | `03-mobile.md` |
+| **Build order** | Ship before login, SIM, and ingest |
 
 ```mermaid
 sequenceDiagram
@@ -30,18 +33,18 @@ sequenceDiagram
     end
 ```
 
-Build this before login, SIM, and ingest. There is no version check on any route in this file.
+There is no version check on any route in this file.
 
-The behaviour that still has to happen, from the live heartbeat:
+| Outcome | Requirement |
+|---|---|
+| Push | FCM token on the device row stays current |
+| Connectivity | `LastPingTime` is server UTC; screens derive connected from it |
+| Security | Client IP recorded, classified, alerted per tenant config |
+| Back Office | Account ping once per logged-in SIM — **old path only** |
+| Data model | New ping does **not** create a device row |
+| API contract | Success: HTTP 200, no command body. Failure: HTTP 400 + `message` + `code` |
 
-- The FCM token on the device row stays current, because push uses it.
-- `LastPingTime` is the server's UTC time, and connectivity is computed from it.
-- The client IP is recorded, classified, and alerted for the tenants configured for that.
-- The Back Office account ping still happens, once per logged-in SIM, but only on the old path.
-- A new ping does not create a device row.
-- The response carries no command. Success is HTTP 200. Failure is HTTP 400 with a message and a code.
-
-The version gate that used to sit on ping does not. A new ping does not report an old build.
+> **Removed behaviour:** The version gate that used to sit on ping is gone. A new ping does not report an old build.
 
 ## Response
 
@@ -78,7 +81,7 @@ Device, leader, and notification use this same handler. `X-Device-Id`, `X-Device
 | `POST /v1/leaders/ping` | `username`, `masterCode` | username, master code, device id |
 | `POST /v1/noti-devices/ping` | none | device id, separate from the collector key |
 
-A matching signature writes Redis, then returns 200. The leader flush may insert the first row on (`username`, `masterCode`, `deviceId`). It does not check that the user exists. The leader flush may insert the first row on (`username`, `masterCode`, `deviceId`). It does not check that the user exists. The leader flush may insert the first row on (`username`, `masterCode`, `deviceId`). It does not check that the user exists.
+A matching signature writes Redis, then returns 200. The leader flush may insert the first row on (`username`, `masterCode`, `deviceId`). It does not check that the user exists.
 
 ### Redis, then a batch to the database
 
