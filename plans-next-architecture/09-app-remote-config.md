@@ -1,32 +1,56 @@
 # 09 · App remote config
 
-**Status:** placeholder. Do not implement from this file until it is marked written.
-**Depends on:** `01-principles.md`, `03-mobile.md`, `05-user-login.md`.
-**This file will answer:** what the phone downloads instead of hardcoded gateway URLs and feature routing in the APK.
-
-Feature flags for SMS, notification collection, and ping enablement stay on the user service and are read through `POST /v1/auth/config` in `05-user-login.md`. This file is for **infrastructure and rollout config**, not those flags.
+| | |
+|---|---|
+| **For** | The config route and the app's config cache |
+| **Answers** | What the app downloads instead of hard-coding hosts and passthrough behaviour |
+| **Not here** | User feature flags. They come from `GET /v1/auth/config` (`05`) |
 
 ```mermaid
 flowchart LR
-    APP["Phone"] --> CFG["GET /v1/config"]
-    CFG --> BASE["api base URL"]
-    CFG --> FLAGS["Dual-run flags\nshouldCallOldPing, …"]
-    CFG --> VER["Pointer to version API"]
+    SET["Settings per environment"] --> CFG["GET /v1/app/config"]
+    CFG --> APP["New app cache"]
+    PING["Every ping response<br/>X-Config-Version"] -->|"differs"| APP
 ```
 
-## Scope (to write)
+## Route
 
-- `GET /v1/config` (and optional `configVersion` / ETag): single `apiBaseUrl`, refresh policy, which legacy forwards the app should perform
-- When to refetch: after login, on interval, on push nudge (if any)
-- Relationship to `08-version-release.md`: version numbers and APK URL may be linked or separate endpoints — decide when writing
-- No embedded `API_URL_SMS_*`, `API_URL_NOTIFICATION_*`, or `API_URL_BO_*` in production builds after cutover
+`GET /v1/app/config`, Bearer token. It supports `If-None-Match`, and answers 304 when nothing changed.
 
-## Out of scope until decided elsewhere
+```json
+{
+  "configVersion": "sha of this body",
+  "apiBaseUrl": "https://…",
+  "pingIntervalSeconds": 60,
+  "shouldCallOldPing": false,
+  "legacyPingBaseUrl": "https://…",
+  "notiPingBaseUrl": "https://…",
+  "legacyFallbackAfterSeconds": 300,
+  "refreshIntervalSeconds": 900
+}
+```
 
-- Per-tenant merchant routing tables on the server (only what the app needs in the config payload)
-- Operator UI to edit config (may be BO or a future console)
+| Field | Rule |
+|---|---|
+| `configVersion` | Also sent as the `ETag`, and as `X-Config-Version` on every ping response |
+| `apiBaseUrl` | This service. The APK embeds one bootstrap URL per build flavour. The app switches to this value, and falls back to the bootstrap URL if it stops answering |
+| `shouldCallOldPing` | `true` exactly when `pingLegacyRoute` is `phone`. The app never receives it any other way |
+| `legacyPingBaseUrl`, `notiPingBaseUrl` | Hosts for the phone-side legacy pings (`04`). Empty after coexistence, which also turns off the fallback |
+| `legacyFallbackAfterSeconds` | See `03-mobile.md` |
+| `refreshIntervalSeconds` | Upper bound between refetches |
 
-## Open when writing
+Values are per environment. The APK contains no legacy, Back Office, or notification host.
 
-- Whether `shouldCallOldPing` / `shouldCallOldIngest` are delivered here or only on the server
-- Signed config responses and cache invalidation
+## When the app refetches
+
+- After login.
+- When a ping response carries an `X-Config-Version` different from the cached one.
+- After `refreshIntervalSeconds` at the latest.
+
+The app keeps the last good config on disk. It uses it when the route is unreachable, including right after a restart.
+
+## Done when
+
+- Changing a setting reaches every pinging phone within one ping interval.
+- `shouldCallOldPing` can only be `true` when this service is not forwarding pings, apart from the switch overlap in `04`.
+- The new APK contains no legacy or Back Office host.

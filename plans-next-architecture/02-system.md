@@ -3,51 +3,69 @@
 | | |
 |---|---|
 | **For** | Someone who needs processes and data before writing code |
-| **Answers** | What runs in the ping build, and what it stores |
-| **Dual-run diagram** | `00-index.md` — this diagram is **where** a ping is stored |
+| **Answers** | What runs in this service, what it stores, and what it is configured with |
+| **Overview** | `00-index.md` |
 
 ```mermaid
 flowchart LR
-    APP["Phone"] --> API["This process"]
-    API --> REDIS["Redis<br/>latest heartbeat"]
-    REDIS --> PG["PostgreSQL<br/>batch update"]
-    API --> OLD["Old ping"]
-    OLD --> BO["Back Office or notification host"]
+    APP["New app"] --> API["API handlers"]
+    API --> PG["PostgreSQL"]
+    API --> REDIS["Redis"]
+    REDIS --> FLUSH["Heartbeat flusher"] --> PG
+    REDIS --> PFWD["Ping forwarder"]
+    PG --> OBX["Outbox worker"]
+    PG --> SHADOW["Shadow parser"]
+    PFWD --> LEG["Legacy"]
+    PFWD --> BO["Back Office"]
+    OBX --> LEG
+    OBX --> BO
+    JOBS["Sync jobs"] --> LEG
+    JOBS --> BO
+    LEG -->|"webhook"| API
 ```
 
-## The ping build
+## Processes
 
-One Go process per environment. The phone uses one base URL. Internal and Reseller each have their own process, database, and config.
+One Go binary per environment. It runs the handlers and the background loops. Handlers scale horizontally. Every loop is safe to run on more than one instance: it either claims rows with `FOR UPDATE SKIP LOCKED` or takes a Redis lock.
 
-A new ping is written to Redis first, one value per device id. A worker copies dirty keys into PostgreSQL in a batch. Redis is the buffer. PostgreSQL is the record. The old ping path is the one that calls the Back Office. It does not wait for that batch.
-
-| Piece | Role in this build |
-|---|---|
-| New ping handler | Checks the signature, writes the latest heartbeat to Redis, returns. Reads `shouldFwdFromServer` only to decide whether to invoke the old handler. |
-| Old ping handler | Forwards the legacy heartbeat. Device and leader go to the Back Office. Notification goes to the notification host. |
-| Version API | Not in this build. |
-| User store | Not in this service. |
-| Payments | Not in this service. |
-
-A device row is created by SIM activation in `06-sim.md`. The new ping updates a row it finds. It does not insert one.
+| Piece | Job | Detail |
+|---|---|---|
+| API handlers | App routes and the legacy webhook | `04`–`09`, `10` |
+| Heartbeat flusher | Copies dirty heartbeats from Redis to PostgreSQL in batches | `04-device-ping.md` |
+| Ping forwarder | Sends the latest heartbeat per device to legacy or the Back Office | `04-device-ping.md` |
+| Outbox worker | Delivers SMS, notifications, sign-outs and resets | `10-legacy-bridge.md` |
+| Shadow parser | Parses stored SMS into statements. Nothing reads them during coexistence except the parity report | `07-sms-noti-ingest.md` |
+| Sync jobs | Sender masks and templates, user reconcile, device reconcile, version poll | `07`, `10`, `08` |
 
 ## What is stored
 
-| Place | What ping puts there |
+| Place | What |
 |---|---|
-| Redis, one key per device id | Latest heartbeat: time, FCM token, device name, build number, client IP. A newer ping replaces the key. An empty FCM token does not erase the one already stored. |
-| Device row in PostgreSQL | The same fields, written by the batch worker, not by the request. |
-| Leader device row | Keyed by username, master code, and device id. The first leader ping may insert it. |
-| Outbox | One unsent Back Office payload per device row. Only the old ping path writes it. |
+| PostgreSQL `sim_device` | One row per normalised SIM: binding, both secrets, latest heartbeat. `06-sim.md` |
+| PostgreSQL `leader_device` | One row per (username, master code, device id). `04-device-ping.md` |
+| PostgreSQL `refresh_token` | Hashes only. `05-user-login.md` |
+| PostgreSQL `sms_inbox`, `sms_statement`, `noti_inbox` | Everything received, and shadow statements. `07-sms-noti-ingest.md` |
+| PostgreSQL `outbox`, `legacy_event`, `audit_log` | Delivery queue, webhook idempotency, resets. `10-legacy-bridge.md` |
+| Redis | Latest heartbeat per device, dirty set, forwarder pending set, token revocation, sender-mask cache, version cache |
 
-`LastPingTime` is when this service accepted the ping, in UTC.
+Redis holds only data that can be rebuilt or that a newer ping replaces. Anything that must survive a restart lives in PostgreSQL.
 
-A row counts as connected when it is logged in and `LastPingTime` is within the disconnect threshold (default 10 minutes). That is computed when a screen asks. It is not a column, and it is not the Back Office's view. The Back Office only moves when the old ping path runs.
+`LastPingTime` is when this service accepted the ping, in UTC. A SIM counts as **connected** when it is logged in and `LastPingTime` is within the disconnect threshold (default 10 minutes). That is computed when asked. It is not stored. During coexistence nothing outside this service reads it. The Back Office reads legacy.
 
 ## Configuration, per environment
 
-Back Office base URL, database URL, Redis URL, disconnect threshold, and `shouldFwdFromServer`. The flag can change without a new binary. The phone's copy of the same flag is `shouldCallOldPing`, described in `03-mobile.md`.
+From the secret manager, never from the repository. No value is shared between Internal and Reseller.
 
-## Later on this same process
+| Group | Keys |
+|---|---|
+| Hosts | legacy base URL, Back Office base URL, Back Office notification host, object-storage bucket and APK prefix |
+| Stores | PostgreSQL URL, Redis URL |
+| Switches | `pingLegacyRoute`, `shouldFwdSmsToLegacy`, `switchOverlapSeconds`, disconnect threshold, verify-sender |
+| Secrets | token signing key, legacy-secret encryption key, legacy webhook secret, legacy user-admin shared secret, app-version secret, notification secret, Telegram bot token |
+| App config | the values served by `09-app-remote-config.md` |
 
-Login is specified in `05-user-login.md`. It forwards to the user service and stores token hashes only. SIM and ingest are not part of the ping deploy.
+Switches and app config change without a new binary. They are reloaded every 30 seconds.
+
+## Not done here during coexistence
+
+Back Office account ping, OTP hook, Telegram SMS alerts, push, deposit confirmation, and BO page APIs. Legacy does all of them for new-app phones, because it receives their traffic through passthrough.

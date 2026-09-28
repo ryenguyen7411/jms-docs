@@ -3,56 +3,58 @@
 | | |
 |---|---|
 | **For** | Server implementer and app wiring |
-| **Answers** | Username/password → token without a second user store |
+| **Answers** | Username and password → tokens, with users still living in legacy |
 | **Headers** | `03-mobile.md` |
-| **Flags** | `POST /v1/auth/config` — not in the login body |
-| **Ping** | Does **not** send `Authorization` |
+| **Revocation sync** | `10-legacy-bridge.md` |
 
 ```mermaid
 sequenceDiagram
     participant App
     participant JMS as This service
-    participant User as User service
+    participant Leg as Legacy
 
     App->>JMS: POST /v1/auth/login
-    JMS->>User: username and password
+    JMS->>Leg: POST /api/User/login
     alt accepted
-        User-->>JMS: identity
-        JMS->>JMS: store token hash
+        Leg-->>JMS: user info and flags
+        JMS->>JMS: sign tokens, store refresh hash
         JMS-->>App: 200 identity and tokens
-    else rejected
-        User-->>JMS: error code
-        JMS-->>App: 400 message and code
+    else rejected or down
+        Leg-->>JMS: error code or no answer
+        JMS-->>App: 400 or 503 with code
     end
 ```
 
-This service does not create users, change passwords, or store a profile. It forwards the login and issues its own token.
+Users, passwords, and flags stay in legacy during coexistence. The Back Office and the Devsite keep managing them there. This service checks the password through legacy, then issues its own tokens. It never stores a password or a user profile.
 
 ## Login
 
-`POST /v1/auth/login`
-
-Headers are the set in `03-mobile.md`. The body is:
+`POST /v1/auth/login`. No token. `X-Device-Id` is required, because the token is bound to it.
 
 | Field | Required |
 |---|---|
 | `username` | yes |
 | `password` | yes |
 
-The password is forwarded as the user service expects it. This service does not hash it and does not write it down.
+Steps:
 
-The user service is called in order, and the first failure is the response:
+1. Rate limit: after 10 failures in 15 minutes for the same username, or for the same device id, return 429 `TOO_MANY_ATTEMPTS`.
+2. Call legacy `POST /api/User/login` with `{ "Username", "Password" }`. Timeout 5 seconds. Forward the password exactly as received. Never log it.
+3. Map legacy's answer:
 
-| User service result | HTTP | `code` |
+| Legacy answer | HTTP | `code` |
 |---|---|---|
-| No such user | 400 | `INVALID_USERNAME` |
-| Password does not match | 400 | `INVALID_PASSWORD` |
-| User is not active | 400 | `INVALID_USER_STATUS_DISABLE` |
-| User service cannot be reached | 503 | `USER_SERVICE_UNAVAILABLE` |
+| Success | 200 | — |
+| `INVALID_USERNAME` | 400 | `INVALID_USERNAME` |
+| `INVALID_PASSWORD` | 400 | `INVALID_PASSWORD` |
+| `INVALID_USER_STATUS_DISABLE` | 400 | `INVALID_USER_STATUS_DISABLE` |
+| Timeout, 5xx, or anything unrecognised | 503 | `LEGACY_UNAVAILABLE` |
 
-The body on 400 and 503 is `{ "message", "code" }`. A 503 must not be reported as a bad password. Nothing is stored on failure.
+A legacy outage must never be reported as a wrong password. Nothing is stored on failure.
 
-Success is HTTP 200. The body is identity and tokens. It does not include feature flags, and it does not include `expiresAt`.
+4. On success, sign an access token and a refresh token, and store the refresh token's hash.
+
+Success body. Flags are not included: the app reads them from `GET /v1/auth/config`.
 
 ```json
 {
@@ -66,30 +68,49 @@ Success is HTTP 200. The body is identity and tokens. It does not include featur
 }
 ```
 
-## Token
+All values come from legacy's login response. **Confirm** that legacy's error body carries these three codes as strings.
 
-Each token is signed and carries its own expiry. The app reads that expiry from the token. Login and refresh do not repeat it in a field.
+## Tokens
 
-The server stores only the SHA-256 hash, the username, the merchant code, and a revoked flag. It does not store a copy of the profile.
+Signed JWT, algorithm ES256, one key pair per environment.
+
+| Claim | Value |
+|---|---|
+| `sub` | username. Usernames are unique within a deployment |
+| `mid` | master merchant code |
+| `sc`, `st` | system code, system type |
+| `ut` | user type: 1 master, 2 leader |
+| `did` | the `X-Device-Id` sent at login |
+| `jti`, `iat`, `exp` | id, issued-at, expiry |
+| `typ` | `access` or `refresh` |
 
 | Rule | Value |
 |---|---|
-| Access lifetime | Configuration, default 24 hours, written into the token |
-| Refresh lifetime | Configuration, default 30 days, written into the token |
-| Where the app sends it | `Authorization: Bearer` on later calls to this service |
-| Ping, leader ping, notification ping | Do not send it |
+| Access lifetime | Configuration, default 24 hours |
+| Refresh lifetime | Configuration, default 30 days |
+| Stored | Refresh tokens only: `jti` hash, username, `did`, family id, expiry, revoked time. Never the token itself |
+| Checked on every request | Signature, expiry, `typ`, the revoked-`jti` set in Redis, and `iat` against the user's `revokedBefore` in Redis |
 
-`POST /v1/auth/refresh` takes `{ "refreshToken" }` and returns a new access token and a new refresh token. The presented refresh token is revoked. A revoked, unknown, or expired refresh token is HTTP 400 `{ "code": "INVALID_REFRESH_TOKEN" }`.
+`POST /v1/auth/refresh` takes `{ "refreshToken" }` and needs no Bearer token.
 
-`POST /v1/auth/logout` revokes the access token and its refresh token. Success is HTTP 200 and an empty body.
+- It returns a new access token and a new refresh token with the same claims, and revokes the one presented.
+- A refresh token that was already rotated and is presented again means it was stolen. Revoke its whole family.
+- A revoked, unknown, or expired refresh token, or one issued before the user's `revokedBefore`, returns 401 `INVALID_REFRESH_TOKEN`.
 
-This service does not hear about a password change or a disabled user until the next login. Tokens stay valid until the expiry inside them, or until the app calls logout.
+`POST /v1/auth/logout` revokes the access token's `jti` and its refresh family. Success is 200 with an empty body.
+
+## When the user changes in legacy
+
+A password change, a disable, or a delete in legacy sets `revokedBefore = now` for that username. The next request fails with 401. The refresh then fails too, and the app goes to login, where legacy refuses a disabled user or an old password. This service learns about the change in two ways, both specified in `10-legacy-bridge.md`:
+
+- a webhook from legacy, within seconds;
+- an hourly reconcile, as a safety net.
 
 ## Flags
 
-`POST /v1/auth/config` is the flags API. It requires the access token. The body is `{ "username", "merchantCode", "systemType" }`. The call is forwarded to the user service.
+`GET /v1/auth/config`, Bearer token. No body: identity comes from the token.
 
-Success is HTTP 200 and only the flags:
+Calls legacy `POST /api/User/get-user-config` with `{ "Username": sub, "MerchantCode": mid, "SystemType": st }`, and returns only the flags:
 
 ```json
 {
@@ -101,17 +122,16 @@ Success is HTTP 200 and only the flags:
 }
 ```
 
-They are the user service's values. This service does not recompute them.
+They are legacy's effective flags, which already apply the leader override and the collector fallback. This service does not recompute them.
 
-A missing or expired access token is HTTP 400 `{ "code": "INVALID_ACCESS_TOKEN" }`. The app reads expiry from the token and logs in again when it has passed.
+- Legacy down returns 503 `LEGACY_UNAVAILABLE`. The app keeps its cached flags.
+- The app calls this after login, on start, and whenever it refetches `09` config.
 
 ## Done when
 
-- A good password returns 200 with identity and tokens, and no flags and no `expiresAt`.
-- The app can read expiry from the access token.
-- Flags come only from `POST /v1/auth/config`.
-- `INVALID_USERNAME`, `INVALID_PASSWORD`, and `INVALID_USER_STATUS_DISABLE` stay distinct.
-- The user service being down is `USER_SERVICE_UNAVAILABLE`, not a wrong password.
-- The password is not in this database.
-- Refresh rotates the refresh token. Logout makes both tokens unusable.
-- Ping still succeeds with no `Authorization` header.
+- A good password returns 200 with identity and tokens, and no flags.
+- The three legacy rejections stay distinct. A legacy outage returns `LEGACY_UNAVAILABLE`.
+- Neither the password nor the access token is in this database or in any log.
+- Refresh rotates. Reusing a rotated refresh token kills its family. Logout makes both tokens unusable.
+- After a user is disabled in legacy, the next ping returns 401 within 1 minute if the webhook is live, and within 1 hour if it is not.
+- `GET /v1/auth/config` returns legacy's flags for the token's user, and cannot be pointed at another user.

@@ -2,182 +2,161 @@
 
 | | |
 |---|---|
-| **For** | The person implementing the Go ping handlers |
-| **Answers** | What the server does after a ping arrives |
-| **Headers** | `03-mobile.md` |
-| **Build order** | Ship before login, SIM, and ingest |
+| **For** | The person implementing the ping handlers, flusher, and forwarder |
+| **Answers** | What happens after a ping arrives, and how the Back Office still learns the phone is alive |
+| **Headers, auth** | `03-mobile.md`, `05-user-login.md` |
+| **Needs** | A token (`05`) and, for a device ping, an activated SIM (`06`) |
 
 ```mermaid
 sequenceDiagram
     participant App
-    participant New as New ping
+    participant New as This service
     participant Redis
     participant DB as PostgreSQL
-    participant Old as Old ping
+    participant Leg as Legacy or BO
     participant BO as Back Office
 
-    App->>New: device, leader, or noti
-    alt signature matches
-        New->>Redis: latest heartbeat
-        New-->>App: 200
-    else rejected
-        New-->>App: 400 message and code
+    App->>New: new ping with Bearer token
+    New->>Redis: latest heartbeat, dirty, pending forward
+    New-->>App: 200 and X-Config-Version
+    Redis->>DB: flush every 45 s or 200 devices
+    alt ping route is server
+        Redis->>Leg: forwarder sends latest heartbeat
+    else ping route is phone
+        App->>Leg: legacy ping
     end
-    Redis->>DB: batch update
-    alt shouldFwdFromServer
-        New->>Old: after the response
-        Old->>BO: legacy forward
-    else shouldCallOldPing
-        App->>Old: legacy ping
-        Old->>BO: legacy forward
-    end
+    Leg->>BO: legacy forwards as today
 ```
+
+The Back Office decides whether a collecting account can take deposits from the pings legacy forwards. During coexistence this service never calls `/api/account/ping` itself. It makes sure legacy receives a ping for every new-app phone, and legacy does the rest.
 
 There is no version check on any route in this file.
 
-| Outcome | Requirement |
-|---|---|
-| Push | FCM token on the device row stays current |
-| Connectivity | `LastPingTime` is server UTC; screens derive connected from it |
-| Security | Client IP recorded, classified, alerted per tenant config |
-| Back Office | Account ping once per logged-in SIM — **old path only** |
-| Data model | New ping does **not** create a device row |
-| API contract | Success: HTTP 200, no command body. Failure: HTTP 400 + `message` + `code` |
+## Routes
 
-> **Removed behaviour:** The version gate that used to sit on ping is gone. A new ping does not report an old build.
-
-## Response
-
-Success is HTTP 200 and an empty body. The client treats any 200 as accepted. It does not read a success code.
-
-Failure is HTTP 400:
-
-```json
-{ "message": "X-Device-Id is required", "code": "MISSING_DEVICE_ID" }
-```
-
-| `code` | When |
-|---|---|
-| `MISSING_DEVICE_ID` | `X-Device-Id` is missing or blank |
-| `INVALID_SIGNATURE` | `signature` is missing, or it matches no secret stored for that device id |
-| `MISSING_FIELD` | A required JSON field for that route is missing |
-
-Nothing is written on 400.
-
-## New pings
-
-Device, leader, and notification use this same handler. `X-Device-Id`, `X-Device-Name`, and `X-Build-Number` are the headers from `03-mobile.md`. The body is:
-
-| Field | Required | Meaning |
+| Route | Caller | Body |
 |---|---|---|
-| `signature` | yes | Uppercase hex SHA256 of `X-Device-Id + fcmToken + deviceSecret`, no separators. `fcmToken` is `""` when omitted. |
-| `fcmToken` | no | Non-empty replaces the stored push token. Empty or omitted leaves it. |
+| `POST /v1/devices/ping` | collector (`userType` master) | `{ "fcmToken"? }` |
+| `POST /v1/leaders/ping` | leader (`userType` leader) | `{ "fcmToken"? }` |
+| `POST /v1/noti-devices/ping` | any user with `isNotiPingEnabled` | `{ "notificationNumber", "fcmToken"? }` |
 
-`deviceSecret` is the secret already stored for that `X-Device-Id`. Ping does not issue secrets. If several rows share the device id, one matching secret is enough. No matching secret, including no row at all, is `INVALID_SIGNATURE`.
+Every route requires the Bearer token. Identity comes from the token: `username`, `merchantCode`, `systemType`, `userType`, and the bound device id `did`.
 
-| Route | Extra required fields | Redis key |
-|---|---|---|
-| `POST /v1/devices/ping` | none | device id |
-| `POST /v1/leaders/ping` | `username`, `masterCode` | username, master code, device id |
-| `POST /v1/noti-devices/ping` | none | device id, separate from the collector key |
+Checks, in order. Nothing is written on failure.
 
-A matching signature writes Redis, then returns 200. The leader flush may insert the first row on (`username`, `masterCode`, `deviceId`). It does not check that the user exists.
+| Check | Failure |
+|---|---|
+| Token valid and not revoked | 401 `INVALID_ACCESS_TOKEN` |
+| `X-Device-Id` present | 400 `MISSING_DEVICE_ID` |
+| `X-Device-Id` equals `did` | 400 `DEVICE_MISMATCH` |
+| Route matches `userType` | 400 `WRONG_USER_TYPE` |
+| Device ping: at least one logged-in `sim_device` row with this device id and `MerchantCode` equal to the token's | 400 `DEVICE_NOT_ACTIVATED` |
+| Notification ping: `notificationNumber` present | 400 `MISSING_FIELD` |
 
-### Redis, then a batch to the database
+Success is HTTP 200, an empty body, and header `X-Config-Version` (`09`). A 200 means Redis accepted the heartbeat. It does not mean PostgreSQL has it, and it does not mean legacy was called.
 
-The request does not update PostgreSQL. It writes one Redis value for the key in the table above, replacing any value already under that key. A collector ping and a notification ping for the same device id do not share a key.
+## Heartbeat in Redis
 
-- `LastPingTime`: server UTC now
-- `fcmToken`: only when the body sent a non-empty token
-- `deviceName`: from `X-Device-Name`, only when the header is non-empty
-- `buildNumber`: from `X-Build-Number`, only when the header is non-empty
-- `clientIp` and its class: direct, CDN, or proxy. The address is the first configured forwarding header, otherwise the connection peer
+Write one value per key, replacing any older value:
 
-A newer ping for the same device replaces the key, so the buffer stays one entry per device. An empty `fcmToken` must not wipe the token already in Redis.
+| Route | Key |
+|---|---|
+| device | `hb:dev:{deviceId}` |
+| leader | `hb:lead:{username}:{masterCode}:{deviceId}` |
+| notification | `hb:noti:{deviceId}` |
 
-A class change for a master merchant code listed in config is sent to that tenant's Telegram channel after the Redis write. Telegram failure does not change the HTTP result.
+| Field | Value |
+|---|---|
+| `lastPingTime` | Server UTC now |
+| `fcmToken` | Only when the body sent a non-empty value. Empty never wipes the stored one |
+| `deviceName` | From `X-Device-Name`, only when non-empty |
+| `buildNumber` | From `X-Build-Number` |
+| `clientIp`, `ipClass` | First configured forwarding header, otherwise the connection peer. Class is `direct`, `cdn`, or `proxy` |
+| `notificationNumber` | Notification route only |
 
-The worker copies dirty keys into PostgreSQL:
+Add the key to the dirty set, and to the forwarder pending set when the ping route is `server`.
+
+## Flush to PostgreSQL
 
 | Rule | Value |
 |---|---|
-| Flush | 200 dirty devices, or 45 seconds, whichever comes first |
-| Write | One batch update. Every row with that device id is updated, including a logged-out row |
-| Success | Clear those dirty keys |
-| Database error | Leave the keys dirty and try the batch again. Do not drop them |
+| Trigger | 200 dirty keys, or 45 seconds, whichever comes first |
+| Device key | One batch update of every `sim_device` row with that device id |
+| Leader key | Upsert `leader_device` on (username, master code, device id). A leader's first ping creates the row. The token proves the user exists |
+| Notification key | Upsert `noti_device` on device id |
+| Success | Remove the keys from the dirty set, unless a newer ping arrived during the flush |
+| Database error | Keep the keys dirty and retry. Never drop them |
 
-HTTP 200 means Redis accepted the heartbeat. It does not mean PostgreSQL has the row yet, and it does not mean the legacy host was called.
+## Forward to legacy (ping route `server`)
 
-After the response is sent, if `shouldFwdFromServer` is true, invoke the old handler that matches this route. The phone is not waiting. That call uses the heartbeat just written to Redis, including `LastPingTime`.
+The forwarder sends the **latest** heartbeat per key. A newer ping replaces an unsent one, so the queue never holds more than one entry per device.
 
-## Old collector ping
+| Rule | Value |
+|---|---|
+| Trigger | Every 15 seconds, or at 200 pending keys |
+| Concurrency | At most 32 calls at once, 5-second timeout |
+| Success | Remove from pending, unless a newer ping arrived |
+| Failure | Keep pending. The next tick retries with the latest heartbeat |
+| Alert | Any key pending for more than 2 minutes. The Back Office drops an account after 10 |
 
-`POST /device/ping` is the collector handler that calls the Back Office.
+Payloads. Values not listed come from the heartbeat.
 
-The phone calls it when `shouldCallOldPing` is true. This service calls it when `shouldFwdFromServer` is true. The body is the legacy body, not the new one: `DeviceId`, `UIVersion`, `AppVersion`, `FCMToken`, `DeviceName`. It is not signed. A bad body is HTTP 400 `{ "message", "code": "MISSING_FIELD" }` and does not call the Back Office. A legacy success stays HTTP 200 and the JSON string `"0000"`, because existing callers already parse that string.
-
-For each logged-in row with this device id, enqueue:
+**Device** → legacy `POST /api/Device/ping`
 
 ```json
-{
-  "PhoneNumber": "",
-  "MerchantCode": "master merchant code on the row",
-  "LastPingTime": "UTC from the latest heartbeat",
-  "UIVersion": "from the legacy body when it sent 1 or 2, otherwise the value already stored"
-}
+{ "DeviceId": "X-Device-Id", "UIVersion": 2, "AppVersion": 0,
+  "FCMToken": "latest stored token", "DeviceName": "latest stored name" }
 ```
 
-Post it to `POST {BO}/api/account/ping`.
+`AppVersion` is `0` on purpose. Legacy never version-gates a ping that reports `0`, so passthrough can never be blocked by the legacy gate. Legacy looks up its own rows for this device id and notifies the Back Office once per logged-in SIM. This works because every activation also happens on legacy (`06`).
 
-One unsent payload per row. A newer heartbeat replaces it. Flush every 15 seconds, or at 200 waiting payloads. Timeout 5 seconds. At most 32 calls at once. Success deletes the payload. Failure keeps it. Alert when the oldest has waited more than 2 minutes. A restart does not drop the outbox.
+**Leader** → legacy `POST /api/leader-account/ping`
 
-A logged-out row is not enqueued. One device id with two SIMs produces two calls. An unknown device id returns HTTP 200 and `"0000"`, and enqueues nothing.
+```json
+{ "Username": "token", "MasterCode": "token merchantCode", "DeviceId": "X-Device-Id",
+  "UIVersion": 2, "AppVersion": 0, "SystemType": "token", "FCMToken": "", "DeviceName": "" }
+```
 
-A legacy client that never calls the new ping still has to move `LastPingTime` and the FCM token. For that client only, this handler writes those fields straight to PostgreSQL, then enqueues. It does not go through Redis.
+**Notification** → Back Office notification ping. **Confirm** the path with the Back Office team. Today's app posts it to the notification host.
+
+```json
+{ "DeviceId": "", "MasterMerchantCode": "token merchantCode", "NotificationNumber": "",
+  "DeviceName": "omit when empty", "AppVersion": 0, "Timestamp": 0,
+  "Signature": "uppercase hex SHA256(DeviceId + MasterMerchantCode + notificationSecret)" }
+```
+
+`Timestamp` is epoch seconds at send time.
+
+**Client IP.** Send the heartbeat's `clientIp` in the header legacy reads for the caller address (**Confirm** the header name). Legacy then keeps its per-tenant IP alerts accurate. This service records the IP and class, but sends no Telegram IP alert during coexistence, because that would duplicate legacy's.
+
+## Switching the ping route
+
+Changing `pingLegacyRoute` must never leave a gap. A short overlap is harmless, because the Back Office only keeps the latest ping time.
+
+| Change | This service | Phones |
+|---|---|---|
+| `phone` → `server` | Starts forwarding immediately | Stop on their next config fetch |
+| `server` → `phone` | Keeps forwarding for `switchOverlapSeconds` (default 300), then stops | Start on their next config fetch |
+
+Phones refetch config within one ping interval, because the ping response carries `X-Config-Version`.
+
+## Legacy ping bodies the phone sends
+
+Used when `shouldCallOldPing` is on, and during the fallback in `03-mobile.md`. They are the same three bodies as above, with two differences:
+
+- the phone sends its real build number as `AppVersion`;
+- the phone builds the notification-ping signature itself, as today's app does.
 
 ## Connectivity
 
-A row is connected when it is logged in and `LastPingTime` in PostgreSQL is inside the disconnect threshold. The threshold is configuration, default 10 minutes. There is no stored connected flag and no job that clears one.
-
-Until the batch worker has flushed, a ping that is only in Redis is not visible to that check. The flush interval is the lag.
-
-## Old leader ping
-
-`POST /leader-account/ping` sends `Username`, `MasterCode`, `DeviceId`, `IP`, `LastPingTime`, and `DeviceName` to `POST {BO}/api/leader-account/ping-event`, with the same outbox rules as the account ping. The phone calls this when `shouldCallOldPing` is true. This service calls it after the new leader ping when `shouldFwdFromServer` is true.
-
-Success for a legacy caller is HTTP 200 and `"0000"`. A bad body is HTTP 400 `{ "message", "code": "MISSING_FIELD" }`. A legacy client that never calls the new route gets the upsert and the Back Office call together, without Redis.
-
-## Old notification ping
-
-`POST /noti-device/ping` is the onward call. It posts the legacy body to the notification host:
-
-```json
-{
-  "DeviceId": "",
-  "MasterMerchantCode": "",
-  "NotificationNumber": "",
-  "DeviceName": "omit when empty",
-  "AppVersion": 0,
-  "Timestamp": 0,
-  "Signature": "uppercase hex SHA256(DeviceId + MasterMerchantCode + notificationSecret)"
-}
-```
-
-`Timestamp` is epoch seconds. The phone sends this body itself when `shouldCallOldPing` is true. When `shouldFwdFromServer` is true, this service builds that body from the notification number and master merchant code stored for the device, signs it with the notification secret, and posts it. If either stored value is missing, it does not post, and the skip is logged. The same outbox rules apply. A failure of this call does not affect the collector ping.
-
-Legacy success is HTTP 200 and `"0000"`. A bad body is HTTP 400 `{ "message", "code": "MISSING_FIELD" }`.
-
-## After sign-out
-
-Sign-out itself is not written yet. Once a row is logged out, the old path skips it. Once the device id is cleared, both device routes treat it as unknown. Sign-out also clears leader push tokens bound to that device. That clear is part of sign-out, not part of this request.
+A SIM is connected when it is logged in and `LastPingTime` in PostgreSQL is within the disconnect threshold (default 10 minutes). A ping that is still only in Redis is not yet visible. The flush interval is the lag.
 
 ## Done when
 
-- A signed new device, leader, or notification ping writes Redis and returns HTTP 200, with no legacy forward.
-- A missing device id returns HTTP 400 `MISSING_DEVICE_ID`. A bad signature, including an unknown device id, returns HTTP 400 `INVALID_SIGNATURE`. Neither writes Redis.
-- Within 45 seconds, or by 200 dirty devices, PostgreSQL has the new `LastPingTime` and, when sent, the new FCM token.
-- A failed database batch leaves the Redis keys in place.
-- Flag off: nothing is forwarded.
-- Only `shouldFwdFromServer`: this service alone performs the old device, leader, and notification calls.
-- Only `shouldCallOldPing`: the phone performs those old calls, and this service does not add them.
-- A new ping does not return a bare `"0000"` or `"1008"`.
+- A valid new ping of each kind writes Redis and returns 200 with `X-Config-Version`.
+- A missing, expired, or revoked token returns 401. A device id that differs from the token returns `DEVICE_MISMATCH`. A device ping with no activated SIM returns `DEVICE_NOT_ACTIVATED`. None of them writes anything.
+- PostgreSQL has the new `LastPingTime` within 45 seconds, and the new FCM token when one was sent. A failed batch keeps its keys.
+- With route `server`, legacy receives a ping for every pinging device within 30 seconds. A legacy outage alerts after 2 minutes and recovers without manual action.
+- With route `phone`, this service forwards nothing.
+- Both switch directions overlap and never gap.
+- Legacy's device page shows a new-app phone as connected, and a Back Office push reaches it.
